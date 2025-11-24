@@ -1,67 +1,47 @@
-# FotoRestauradorX Backend v1.1
+# FotoRestauradorX Backend v1.2 (Qwen-Image-Edit, región Singapore)
 
-Backend en Node/Express para la app **FotoRestauradorX**, usando el modelo
-**wanx2.1-imageedit** de Alibaba Model Studio (DashScope).
+Este backend usa **Qwen-Image-Edit-Plus** en la región **Singapore** (`dashscope-intl`)
+para restaurar / mejorar fotos.
 
-## Endpoint de prueba
+## Endpoints
 
-GET `/api/health`
+### GET /api/health
 
 ```bash
-curl https://fotorestauradorx-backend.onrender.com/api/health
+curl https://TU-RENDER-URL.onrender.com/api/health
 ```
 
-## Endpoint de restauración
-
-POST `/api/restore`
+### POST /api/restore
 
 Body (JSON):
 
 ```json
 {
   "imageBase64": "BASE64_SIN_PREFIX",
-  "mode": "super" // o "color"
+  "mode": "super"
 }
 ```
 
-- `mode = "super"` → usa `super_resolution` (más nitidez / HD).
-- `mode = "color"` → usa `colorization` (colorea fotos en blanco y negro).
+- `imageBase64`: el JPEG en Base64 **sin** `data:image/jpeg;base64,`.
+- `mode`: opcional. `"super"` para más nitidez, `"color"` para colorizar,
+  cualquier otro valor = restauración general.
 
 Respuesta:
 
 ```json
-{
-  "url": "https://..."
-}
+{ "url": "https://..." }
 ```
 
-Esta URL es la imagen generada por Wan 2.1. Es temporal (24h aprox).
+## Variables de entorno (Render)
 
-## Configuración
+- `DASHSCOPE_API_KEY` → tu key `sk-...` de Alibaba (región Singapore).
+- `DASHSCOPE_BASE_URL` → (opcional) deja el default:
+  `https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation`
+- `PORT` → 3000
 
-1. Instalar dependencias:
+## Comandos
 
 ```bash
 npm install
-```
-
-2. Crear `.env` basado en `.env.example`:
-
-```env
-DASHSCOPE_API_KEY=sk-xxxxxxxxxxxxxxxxxxxx
-PORT=3000
-```
-
-3. Ejecutar en local:
-
-```bash
 npm start
 ```
-
-## Despliegue en Render
-
-- Build command: `npm install`
-- Start command: `npm start`
-- Env vars:
-  - `DASHSCOPE_API_KEY` → tu API key.
-  - `PORT` → `3000` (Render la ajusta internamente).

@@ -7,17 +7,30 @@ dotenv.config();
 const app = express();
 app.use(express.json({ limit: '15mb' }));
 
+// IMPORTANTE: esta API KEY es la de Alibaba Model Studio (región Singapore)
 const API_KEY = process.env.DASHSCOPE_API_KEY;
-// IMPORTANTE: usar el endpoint correcto de DashScope para Wan 2.1
-const BASE_URL = 'https://dashscope.aliyuncs.com/api/v1';
 
-// Healthcheck simple
+// Endpoint para SINGAPORE (intl)
+const BASE_URL =
+  process.env.DASHSCOPE_BASE_URL ||
+  'https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
+
+// Healthcheck
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, message: 'FotoRestauradorX backend OK' });
+  res.json({ ok: true, message: 'FotoRestauradorX backend OK (Qwen-Image-Edit)' });
 });
 
-// Endpoint principal de restauración
-// Body esperado: { imageBase64: "...", mode: "super" | "color" }
+/**
+ * POST /api/restore
+ * Body:
+ * {
+ *   "imageBase64": ".....",   // SIN "data:image/jpeg;base64,"
+ *   "mode": "super" | "color" // opcional, solo para cambiar el prompt
+ * }
+ *
+ * Respuesta:
+ * { "url": "https://....png" }
+ */
 app.post('/api/restore', async (req, res) => {
   try {
     const { imageBase64, mode } = req.body || {};
@@ -36,112 +49,96 @@ app.post('/api/restore', async (req, res) => {
       });
     }
 
-    const func = mode === 'color' ? 'colorization' : 'super_resolution';
+    // Armamos el "data:..." como pide Qwen-Image-Edit
+    const dataUrl = `data:image/jpeg;base64,${imageBase64}`;
+
+    // Prompt según modo
+    let instruction = 'Restore old photo, increase sharpness and details, keep faces natural.';
+    if (mode === 'color') {
+      instruction =
+        'Restore and colorize old black and white photo, keep skin tones and faces natural.';
+    } else if (mode === 'super') {
+      instruction =
+        'Super-resolution and enhancement for an old or low-quality photo, keep faces natural.';
+    }
 
     const body = {
-      model: 'wanx2.1-imageedit',
+      model: 'qwen-image-edit-plus',
       input: {
-        function: func,
-        prompt:
-          func === 'colorization'
-            ? 'Restore and colorize the old photo, keep faces natural.'
-            : 'Restore and enhance photo quality, keep faces natural.',
-        base_image_url: `data:image/jpeg;base64,${imageBase64}`
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { image: dataUrl },
+              { text: instruction }
+            ]
+          }
+        ]
       },
-      parameters:
-        func === 'super_resolution'
-          ? { upscale_factor: 2, n: 1 }
-          : { n: 1 }
+      parameters: {
+        n: 1,
+        watermark: false,
+        prompt_extend: true
+      }
     };
 
-    console.log('Llamando a DashScope con function =', func);
+    console.log('Llamando a Qwen-Image-Edit-Plus en', BASE_URL);
 
-    const createResp = await fetch(
-      BASE_URL + '/services/aigc/image2image/image-synthesis',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${API_KEY}`,
-          'X-DashScope-Async': 'enable'
-        },
-        body: JSON.stringify(body)
-      }
-    );
+    const resp = await fetch(BASE_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`
+      },
+      body: JSON.stringify(body)
+    });
 
-    const createText = await createResp.text();
-    let createJson = {};
+    const text = await resp.text();
+    let json;
     try {
-      createJson = JSON.parse(createText);
+      json = JSON.parse(text);
     } catch (e) {
-      console.error('No se pudo parsear JSON de DashScope:', createText);
-    }
-
-    if (!createResp.ok) {
-      console.error('DashScope create error status=', createResp.status, createJson);
+      console.error('No se pudo parsear JSON de Qwen:', text);
       return res.status(500).json({
-        error: 'dashscope_create',
-        status: createResp.status,
-        detail: createJson
+        error: 'invalid_json',
+        status: resp.status,
+        raw: text
       });
     }
 
-    const taskId =
-      createJson.output && (createJson.output.task_id || createJson.output.taskId);
-    if (!taskId) {
-      console.error('No task_id en respuesta:', createJson);
-      return res.status(500).json({ error: 'no_task_id', detail: createJson });
+    if (!resp.ok) {
+      console.error('Error Qwen status=', resp.status, json);
+      return res.status(500).json({
+        error: 'qwen_error',
+        status: resp.status,
+        detail: json
+      });
     }
 
-    console.log('Task creada. ID =', taskId);
+    // Sacar URL de la imagen
+    try {
+      const choices = json.output?.choices || [];
+      const firstChoice = choices[0];
+      const content = firstChoice?.message?.content || [];
+      const firstImageBlock = content.find((c) => c.image) || content[0];
+      const imageUrl = firstImageBlock?.image;
 
-    let finalUrl = null;
-
-    for (let i = 0; i < 15; i++) {
-      await new Promise((r) => setTimeout(r, 2000)); // esperar 2 segundos
-
-      const taskResp = await fetch(BASE_URL + '/tasks/' + taskId, {
-        headers: {
-          Authorization: `Bearer ${API_KEY}`
-        }
-      });
-
-      const taskText = await taskResp.text();
-      let taskJson = {};
-      try {
-        taskJson = JSON.parse(taskText);
-      } catch (e) {
-        console.error('No se pudo parsear JSON de task:', taskText);
+      if (!imageUrl) {
+        console.error('No se encontró image URL en respuesta Qwen:', json);
+        return res.status(500).json({
+          error: 'no_image_url',
+          detail: json
+        });
       }
 
-      const status =
-        taskJson.output && (taskJson.output.task_status || taskJson.output.taskStatus);
-
-      console.log('Task status:', status);
-
-      if (status === 'SUCCEEDED') {
-        const results =
-          (taskJson.output && (taskJson.output.results || taskJson.output.results_list)) ||
-          [];
-        const result = results.find((r) => r.url || r.image_url) || results[0];
-        finalUrl = (result && (result.url || result.image_url)) || null;
-        break;
-      } else if (status === 'FAILED' || status === 'CANCELED') {
-        console.error('Task failed:', taskJson);
-        return res.status(500).json({ error: 'task_failed', detail: taskJson });
-      }
-      // si sigue en PENDING/RUNNING, el loop continúa
-    }
-
-    if (!finalUrl) {
-      console.error('Timeout o sin URL final en task');
-      return res.status(504).json({
-        error: 'timeout',
-        detail: 'La tarea tardó demasiado o no devolvió URL'
+      return res.json({ url: imageUrl });
+    } catch (e) {
+      console.error('Error al extraer URL de respuesta Qwen:', e, json);
+      return res.status(500).json({
+        error: 'parse_output_error',
+        message: e.message
       });
     }
-
-    return res.json({ url: finalUrl });
   } catch (err) {
     console.error('Server error:', err);
     return res.status(500).json({ error: 'server_error', message: err.message });
