@@ -1,16 +1,21 @@
-# FotoRestauradorX Backend
+# FotoRestauradorX Backend v1.1
 
-Backend sencillo en Node/Express para la app **FotoRestauradorX**.  
-Expone un endpoint `/api/restore` que recibe una foto en base64, la manda al modelo de Alibaba Cloud (DashScope) `wanx2.1-imageedit` y devuelve una URL de la imagen restaurada.
+Backend en Node/Express para la app **FotoRestauradorX**, usando el modelo
+**wanx2.1-imageedit** de Alibaba Model Studio (DashScope).
 
-## Endpoints
+## Endpoint de prueba
 
-### `GET /api/health`
-Devuelve un JSON simple para comprobar que el backend está vivo.
+GET `/api/health`
 
-### `POST /api/restore`
+```bash
+curl https://fotorestauradorx-backend.onrender.com/api/health
+```
 
-Body esperado (JSON):
+## Endpoint de restauración
+
+POST `/api/restore`
+
+Body (JSON):
 
 ```json
 {
@@ -19,10 +24,10 @@ Body esperado (JSON):
 }
 ```
 
-- `mode = "super"` → usa `super_resolution` (mejora nitidez/calidad).
+- `mode = "super"` → usa `super_resolution` (más nitidez / HD).
 - `mode = "color"` → usa `colorization` (colorea fotos en blanco y negro).
 
-Respuesta exitosa:
+Respuesta:
 
 ```json
 {
@@ -30,41 +35,33 @@ Respuesta exitosa:
 }
 ```
 
-Esa URL es la imagen restaurada generada por el servicio de Alibaba.
+Esta URL es la imagen generada por Wan 2.1. Es temporal (24h aprox).
 
 ## Configuración
 
-1. Instala dependencias:
+1. Instalar dependencias:
 
 ```bash
 npm install
 ```
 
-2. Crea un archivo `.env` a partir de `.env.example`:
+2. Crear `.env` basado en `.env.example`:
 
 ```env
 DASHSCOPE_API_KEY=sk-xxxxxxxxxxxxxxxxxxxx
 PORT=3000
 ```
 
-3. Ejecuta en local:
+3. Ejecutar en local:
 
 ```bash
 npm start
-```
-
-El backend se levantará en `http://localhost:3000`.
-
-Comprueba:
-
-```bash
-curl http://localhost:3000/api/health
 ```
 
 ## Despliegue en Render
 
 - Build command: `npm install`
 - Start command: `npm start`
-- Variables de entorno:
-  - `DASHSCOPE_API_KEY` → tu API Key de DashScope.
-  - `PORT` → `3000` (Render la sobreescribe internamente, pero no estorba).
+- Env vars:
+  - `DASHSCOPE_API_KEY` → tu API key.
+  - `PORT` → `3000` (Render la ajusta internamente).

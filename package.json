@@ -1,7 +1,7 @@
 {
   "name": "fotorestauradorx-backend",
-  "version": "1.0.0",
-  "description": "Backend Node/Express para restaurar fotos con Alibaba Cloud Model Studio (DashScope).",
+  "version": "1.1.0",
+  "description": "Backend Node/Express para FotoRestauradorX con integraci\u00f3n DashScope Wan2.1.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

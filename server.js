@@ -8,9 +8,10 @@ const app = express();
 app.use(express.json({ limit: '15mb' }));
 
 const API_KEY = process.env.DASHSCOPE_API_KEY;
-const BASE_URL = 'https://dashscope-intl.aliyuncs.com/api/v1';
+// IMPORTANTE: usar el endpoint correcto de DashScope para Wan 2.1
+const BASE_URL = 'https://dashscope.aliyuncs.com/api/v1';
 
-// Sencillo healthcheck
+// Healthcheck simple
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, message: 'FotoRestauradorX backend OK' });
 });
@@ -22,11 +23,17 @@ app.post('/api/restore', async (req, res) => {
     const { imageBase64, mode } = req.body || {};
 
     if (!API_KEY) {
-      return res.status(500).json({ error: 'missing_api_key', message: 'DASHSCOPE_API_KEY no está configurada' });
+      return res.status(500).json({
+        error: 'missing_api_key',
+        message: 'DASHSCOPE_API_KEY no está configurada en Render'
+      });
     }
 
     if (!imageBase64) {
-      return res.status(400).json({ error: 'imageBase64_required' });
+      return res.status(400).json({
+        error: 'imageBase64_required',
+        message: 'Falta imageBase64 en el body'
+      });
     }
 
     const func = mode === 'color' ? 'colorization' : 'super_resolution';
@@ -43,13 +50,14 @@ app.post('/api/restore', async (req, res) => {
       },
       parameters:
         func === 'super_resolution'
-          ? { upscale_factor: 2, watermark: false, n: 1 }
-          : { watermark: false, n: 1 }
+          ? { upscale_factor: 2, n: 1 }
+          : { n: 1 }
     };
 
-    // 1) Crear tarea asíncrona en DashScope
+    console.log('Llamando a DashScope con function =', func);
+
     const createResp = await fetch(
-      `${BASE_URL}/services/aigc/image2image/image-synthesis`,
+      BASE_URL + '/services/aigc/image2image/image-synthesis',
       {
         method: 'POST',
         headers: {
@@ -61,42 +69,62 @@ app.post('/api/restore', async (req, res) => {
       }
     );
 
-    const createJson = await createResp.json().catch(() => ({}));
-
-    if (!createResp.ok) {
-      console.error('DashScope create error:', createJson);
-      return res
-        .status(500)
-        .json({ error: 'dashscope_create', detail: createJson });
+    const createText = await createResp.text();
+    let createJson = {};
+    try {
+      createJson = JSON.parse(createText);
+    } catch (e) {
+      console.error('No se pudo parsear JSON de DashScope:', createText);
     }
 
-    const taskId = createJson.output && createJson.output.task_id;
+    if (!createResp.ok) {
+      console.error('DashScope create error status=', createResp.status, createJson);
+      return res.status(500).json({
+        error: 'dashscope_create',
+        status: createResp.status,
+        detail: createJson
+      });
+    }
+
+    const taskId =
+      createJson.output && (createJson.output.task_id || createJson.output.taskId);
     if (!taskId) {
       console.error('No task_id en respuesta:', createJson);
       return res.status(500).json({ error: 'no_task_id', detail: createJson });
     }
 
-    // 2) Polling de la tarea
+    console.log('Task creada. ID =', taskId);
+
     let finalUrl = null;
 
     for (let i = 0; i < 15; i++) {
       await new Promise((r) => setTimeout(r, 2000)); // esperar 2 segundos
 
-      const taskResp = await fetch(`${BASE_URL}/tasks/${taskId}`, {
+      const taskResp = await fetch(BASE_URL + '/tasks/' + taskId, {
         headers: {
           Authorization: `Bearer ${API_KEY}`
         }
       });
 
-      const taskJson = await taskResp.json().catch(() => ({}));
-      const status = taskJson.output && taskJson.output.task_status;
+      const taskText = await taskResp.text();
+      let taskJson = {};
+      try {
+        taskJson = JSON.parse(taskText);
+      } catch (e) {
+        console.error('No se pudo parsear JSON de task:', taskText);
+      }
+
+      const status =
+        taskJson.output && (taskJson.output.task_status || taskJson.output.taskStatus);
 
       console.log('Task status:', status);
 
       if (status === 'SUCCEEDED') {
-        const results = (taskJson.output && taskJson.output.results) || [];
-        const result = results.find(r => r.url);
-        finalUrl = result && result.url;
+        const results =
+          (taskJson.output && (taskJson.output.results || taskJson.output.results_list)) ||
+          [];
+        const result = results.find((r) => r.url || r.image_url) || results[0];
+        finalUrl = (result && (result.url || result.image_url)) || null;
         break;
       } else if (status === 'FAILED' || status === 'CANCELED') {
         console.error('Task failed:', taskJson);
@@ -106,9 +134,11 @@ app.post('/api/restore', async (req, res) => {
     }
 
     if (!finalUrl) {
-      return res
-        .status(504)
-        .json({ error: 'timeout', detail: 'La tarea tardó demasiado o no devolvió URL' });
+      console.error('Timeout o sin URL final en task');
+      return res.status(504).json({
+        error: 'timeout',
+        detail: 'La tarea tardó demasiado o no devolvió URL'
+      });
     }
 
     return res.json({ url: finalUrl });
